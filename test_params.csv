@@ -1,0 +1,4 @@
+sl_no,name,packet_id,offset,type,min,max,waveform,freq,phase,samples_per_500ms,full_sweep,start_time,end_time,fixed_value
+1,test_param_1,0,4,float,0.0,10.0,Sine,1.0,0.0,1,True,-900.0,1200.0,1.0
+2,test_param_2,0,8,float,0.0,20.0,Triangle,0.5,0.0,5,True,-900.0,1200.0,
+3,test_param_3,1,0,float,-50.0,50.0,Square,2.0,0.0,1,True,-900.0,1200.0,0.0

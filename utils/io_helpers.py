@@ -7,6 +7,8 @@ def load_parameters_from_file(filename):
         return load_parameters_from_csv(filename)
     elif filename.endswith('.bin'):
         return load_parameters_from_binary(filename)
+    elif filename.endswith('.dat'):
+        return load_parameters_from_binary(filename)  # .dat files use same binary format as .bin
     else:
         raise ValueError("Unsupported file type")
 

@@ -1,74 +1,38 @@
 import math
 import random
-from abc import ABC, abstractmethod
 
-class BaseWaveformGenerator(ABC):
-    @abstractmethod
-    def value(self, t):
-        pass
+def make_waveform(waveform_type, freq, phase, full_sweep):
+    class BaseWaveform:
+        def value(self, t, min_v, max_v):
+            norm = self._compute(t)  # Returns [-1, 1]
+            return min_v + (max_v - min_v) * (norm + 1) / 2
 
-    def values(self, t_array):
-        return [self.value(t) for t in t_array]
+    class Sine(BaseWaveform):
+        def _compute(self, t):
+            return math.sin(2 * math.pi * freq * t + phase)
 
-class SineGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency, phase=0.0):
-        self.frequency = frequency
-        self.phase = phase
+    class Triangle(BaseWaveform):
+        def _compute(self, t):
+            period = 1 / freq
+            frac = math.fmod(t + phase / (2 * math.pi), period) / period
+            return -1 + 4 * frac if frac < 0.5 else 3 - 4 * frac
 
-    def value(self, t):
-        return math.sin(2 * math.pi * self.frequency * t + self.phase)
+    class Square(BaseWaveform):
+        def _compute(self, t):
+            return math.copysign(1, math.sin(2 * math.pi * freq * t + phase))
 
-class CosineGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency, phase=0.0):
-        self.frequency = frequency
-        self.phase = phase
+    class Step(BaseWaveform):
+        def _compute(self, t):
+            return 1 if math.sin(2 * math.pi * freq * t + phase) > 0 else -1
 
-    def value(self, t):
-        return math.cos(2 * math.pi * self.frequency * t + self.phase)
+    class Noise(BaseWaveform):
+        def _compute(self, t):
+            return random.uniform(-1, 1)
 
-class TriangleGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency, phase=0.0):
-        self.frequency = frequency
-        self.phase = phase
-
-    def value(self, t):
-        period = 1 / self.frequency
-        frac = math.fmod(t + self.phase / (2 * math.pi * self.frequency), period) / period
-        if frac < 0.5:
-            return -1 + 4 * frac
-        else:
-            return 3 - 4 * frac
-
-class SquareGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency, phase=0.0):
-        self.frequency = frequency
-        self.phase = phase
-
-    def value(self, t):
-        return math.copysign(1, math.sin(2 * math.pi * self.frequency * t + self.phase))
-
-class StepGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency, phase=0.0):
-        self.frequency = frequency
-        self.phase = phase
-
-    def value(self, t):
-        # Simple step: alternate -1 and 1 based on frequency
-        if math.sin(2 * math.pi * self.frequency * t + self.phase) > 0:
-            return 1
-        return -1
-
-class NoiseGenerator(BaseWaveformGenerator):
-    def __init__(self, frequency=0, phase=0):
-        pass
-
-    def value(self, t):
-        return random.uniform(-1, 1)
-
-class ConstantGenerator(BaseWaveformGenerator):
-    def __init__(self, value=1.0):
-        # value should be in normalized units (typically -1..1)
-        self._value = float(value)
-
-    def value(self, t):
-        return self._value
+    return {
+        "Sine": Sine,
+        "Triangle": Triangle,
+        "Square": Square,
+        "Step": Step,
+        "Noise": Noise
+    }.get(waveform_type, Sine)()

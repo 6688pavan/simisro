@@ -1,34 +1,31 @@
-from PyQt5.QtWidgets import QMainWindow, QSplitter, QHBoxLayout, QVBoxLayout, QWidget, QGroupBox, QPushButton, QLineEdit, QDoubleSpinBox, QLabel, QFileDialog, QSpinBox
+from PyQt5.QtWidgets import (QMainWindow, QSplitter, QHBoxLayout, QVBoxLayout, QWidget, 
+                             QGroupBox, QPushButton, QLineEdit, QLabel, QFileDialog, 
+                             QSpinBox, QComboBox, QGridLayout, QTextEdit)
 from PyQt5.QtCore import Qt
 from gui.widgets.param_table import ParameterTableWidget
 from gui.widgets.waveform_plot import WaveformPlotWidget
-from gui.widgets.log_view import LogViewWidget
-from gui.parameter_editor import ParameterEditorWindow
+from gui.parameter_editor import ParameterEditorDialog
 from threads.seeder_thread import SeederThread
 from threads.sender_thread import SenderThread
-from core.models import ParameterList, RecordSpec
 from core.seeder import SeedingEngine
-from core.multicast_sender import MulticastSender
-from utils.io_helpers import load_parameters_from_file
-from utils.json_helpers import save_config, load_config
-from threads.worker_signals import WorkerSignals
+from core.loader import Loader
+from utils.config import ConfigManager
+from core.models import Parameter
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Telemetry Simulator")
-        self.parameter_list = ParameterList()
-        self.record_spec = RecordSpec()
-        self.signals = WorkerSignals()
-        self.seeding_engine = SeedingEngine(self.parameter_list, self.record_spec, self.signals)
-        self.multicast_sender = MulticastSender("239.0.0.1", 12345)
-        # Threads will be created in setup_threads so they can be recreated on Reset
+        self.parameters = []
+        self.dat_buffer = None
         self.seeder_thread = None
         self.sender_thread = None
-        self.bytes_sent = 0
+        self.seeding_engine = SeedingEngine()
+        self.loader = Loader()
+        self.config_manager = ConfigManager()
         self.setup_ui()
-        self.setup_threads()
         self.connect_signals()
+        self.apply_grey_theme()
 
     def setup_ui(self):
         central = QWidget()
@@ -36,325 +33,442 @@ class MainWindow(QMainWindow):
         central.setLayout(main_lay)
         self.setCentralWidget(central)
 
-        # Top layout
-        top_lay = QHBoxLayout()
-        main_lay.addLayout(top_lay)
-
-        # Controls
-        controls_group = QGroupBox("Controls")
-        controls_lay = QHBoxLayout()
+        # Top Bar: Buttons
+        top_bar = QHBoxLayout()
         self.start_btn = QPushButton("Start")
         self.pause_btn = QPushButton("Pause")
         self.resume_btn = QPushButton("Resume")
-        self.stop_btn = QPushButton("Stop")
-        self.reset_btn = QPushButton("Reset")
-        controls_lay.addWidget(self.start_btn)
-        controls_lay.addWidget(self.pause_btn)
-        controls_lay.addWidget(self.resume_btn)
-        controls_lay.addWidget(self.stop_btn)
-        controls_lay.addWidget(self.reset_btn)
-        controls_group.setLayout(controls_lay)
-        top_lay.addWidget(controls_group)
-
-        # Config
-        config_group = QGroupBox("Config")
-        config_lay = QHBoxLayout()
-        self.export_btn = QPushButton("Export JSON")
+        self.stop_btn = QPushButton("Reset")
+        self.export_btn = QPushButton("Export Config")
         self.load_btn = QPushButton("Load Config")
-        config_lay.addWidget(self.export_btn)
-        config_lay.addWidget(self.load_btn)
-        config_group.setLayout(config_lay)
-        top_lay.addWidget(config_group)
+        self.browse_btn = QPushButton("Browse File")
+        
+        top_bar.addWidget(self.start_btn)
+        top_bar.addWidget(self.pause_btn)
+        top_bar.addWidget(self.resume_btn)
+        top_bar.addWidget(self.stop_btn)
+        top_bar.addWidget(self.export_btn)
+        top_bar.addWidget(self.load_btn)
+        top_bar.addWidget(self.browse_btn)
+        main_lay.addLayout(top_bar)
 
-        # File Loader
-        file_group = QGroupBox("File Loader")
-        file_lay = QHBoxLayout()
-        self.browse_btn = QPushButton("Browse")
-        self.file_label = QLabel("No file")
-        file_lay.addWidget(self.browse_btn)
-        file_lay.addWidget(self.file_label)
-        file_group.setLayout(file_lay)
-        top_lay.addWidget(file_group)
-
-        # Time
-        time_group = QGroupBox("Time")
-        time_lay = QHBoxLayout()
-        time_lay.addWidget(QLabel("Start:"))
-        self.start_edit = QLineEdit("-900.0")
-        time_lay.addWidget(self.start_edit)
-        time_lay.addWidget(QLabel("End:"))
-        self.end_edit = QLineEdit("1200.0")
-        time_lay.addWidget(self.end_edit)
+        # Top Panes (QGridLayout)
+        top_panes = QGridLayout()
+        
+        # Left: Start/End Time, Transmission Hz
+        time_group = QGroupBox("Time & Hz")
+        time_lay = QVBoxLayout()
+        time_lay.addWidget(QLabel("Start Time:"))
+        self.start_time_edit = QLineEdit("-900.0")
+        time_lay.addWidget(self.start_time_edit)
+        time_lay.addWidget(QLabel("End Time:"))
+        self.end_time_edit = QLineEdit("1200.0")
+        time_lay.addWidget(self.end_time_edit)
+        time_lay.addWidget(QLabel("Transmission Hz:"))
+        self.hz_combo = QComboBox()
+        self.hz_combo.addItems(["1", "2", "5", "10", "50"])
+        self.hz_combo.setCurrentText("2")
+        time_lay.addWidget(self.hz_combo)
         time_group.setLayout(time_lay)
-        top_lay.addWidget(time_group)
+        top_panes.addWidget(time_group, 0, 0)
 
-        # Hz
-        hz_group = QGroupBox("Transmission Hz")
-        hz_lay = QHBoxLayout()
-        hz_lay.addWidget(QLabel("Hz:"))
-        self.hz_spin = QDoubleSpinBox()
-        self.hz_spin.setValue(2.0)
-        hz_lay.addWidget(self.hz_spin)
-        hz_group.setLayout(hz_lay)
-        top_lay.addWidget(hz_group)
-
-        # Stats
+        # Middle: Stats
         stats_group = QGroupBox("Live Stats")
-        stats_lay = QHBoxLayout()
-        self.current_time_label = QLabel("Current Time: 0")
+        stats_lay = QVBoxLayout()
+        self.current_time_label = QLabel("Current Time: 0 sec")
         self.records_sent_label = QLabel("Records Sent: 0")
         self.bytes_sent_label = QLabel("Bytes Sent: 0")
         self.packets_per_record_label = QLabel("Packets/Record: 10")
         stats_lay.addWidget(self.current_time_label)
         stats_lay.addWidget(self.records_sent_label)
-        stats_lay.addWidget(self.bytes_sent_label)
         stats_lay.addWidget(self.packets_per_record_label)
         stats_group.setLayout(stats_lay)
+        top_panes.addWidget(stats_group, 0, 1)
 
-        # Network
+        # Right: Multicast IP, Port
         net_group = QGroupBox("Network")
-        net_lay = QHBoxLayout()
+        net_lay = QVBoxLayout()
         net_lay.addWidget(QLabel("Multicast IP:"))
         self.multicast_ip_edit = QLineEdit("239.0.0.1")
         net_lay.addWidget(self.multicast_ip_edit)
         net_lay.addWidget(QLabel("Port:"))
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(12345)
-        net_lay.addWidget(self.port_spin)
+        self.port_edit = QLineEdit("12345")
+        net_lay.addWidget(self.port_edit)
         net_group.setLayout(net_lay)
+        top_panes.addWidget(net_group, 0, 2)
 
-        # Stack Live Stats and Network vertically (one below the other)
-        stats_net_widget = QWidget()
-        stats_net_layout = QVBoxLayout()
-        stats_net_layout.setContentsMargins(0, 0, 0, 0)
-        stats_net_layout.addWidget(stats_group)
-        stats_net_layout.addWidget(net_group)
-        stats_net_widget.setLayout(stats_net_layout)
-        top_lay.addWidget(stats_net_widget)
+        main_lay.addLayout(top_panes)
 
-        # Middle splitter
+        # Middle (QSplitter)
         splitter = QSplitter(Qt.Horizontal)
         main_lay.addWidget(splitter)
 
-        # Left: Parameter table
+        # Left: Parameter table with controls
         left_widget = QWidget()
         left_lay = QVBoxLayout()
-        left_widget.setLayout(left_lay)
-        self.param_table = ParameterTableWidget(self)
+        self.param_table = ParameterTableWidget(self.parameters)
         left_lay.addWidget(self.param_table)
-        btn_lay = QHBoxLayout()
+        
+        # Parameter controls
+        param_controls = QHBoxLayout()
         self.add_param_btn = QPushButton("Add Parameter")
-        self.remove_param_btn = QPushButton("Remove Parameter")
         self.edit_param_btn = QPushButton("Edit Parameter")
-        btn_lay.addWidget(self.add_param_btn)
-        btn_lay.addWidget(self.remove_param_btn)
-        btn_lay.addWidget(self.edit_param_btn)
-        left_lay.addLayout(btn_lay)
+        self.remove_param_btn = QPushButton("Remove Parameter")
+        param_controls.addWidget(self.add_param_btn)
+        param_controls.addWidget(self.edit_param_btn)
+        param_controls.addWidget(self.remove_param_btn)
+        left_lay.addLayout(param_controls)
+        
+        left_widget.setLayout(left_lay)
         splitter.addWidget(left_widget)
 
-        # Right: Waveform plot (containerized for proper sizing)
-        waveform_container = QWidget()
-        waveform_layout = QVBoxLayout()
-        waveform_layout.setContentsMargins(0, 0, 0, 0)
+        # Right: Waveform plot with graph options
+        right_widget = QWidget()
+        right_lay = QVBoxLayout()
         self.waveform_plot = WaveformPlotWidget()
-        waveform_layout.addWidget(self.waveform_plot)
-        waveform_container.setLayout(waveform_layout)
-        splitter.addWidget(waveform_container)
+        right_lay.addWidget(self.waveform_plot)
+        
+        # Graph options button
+        self.graph_options_btn = QPushButton("Graph Options")
+        right_lay.addWidget(self.graph_options_btn)
+        
+        right_widget.setLayout(right_lay)
+        splitter.addWidget(right_widget)
 
         # Bottom: Log view
-        self.log_view = LogViewWidget()
-        main_lay.addWidget(self.log_view)
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        main_lay.addWidget(self.log)
+
+    def apply_grey_theme(self):
+        """Apply grey color scheme to UI elements"""
+        # Set main window background
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QWidget {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QGroupBox {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+                font-weight: bold;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: #ffffff;
+            }
+            QPushButton {
+                background-color: #4a4a4a;
+                border: 1px solid #666666;
+                border-radius: 3px;
+                padding: 5px 10px;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+                border: 1px solid #777777;
+            }
+            QPushButton:pressed {
+                background-color: #3a3a3a;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #666666;
+                border: 1px solid #444444;
+            }
+            QLineEdit {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 5px;
+                color: #ffffff;
+            }
+            QLineEdit:focus {
+                border: 2px solid #666666;
+            }
+            QComboBox {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 5px;
+                color: #ffffff;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                color: #ffffff;
+                selection-background-color: #4a4a4a;
+            }
+            QLabel {
+                color: #ffffff;
+            }
+            QTableWidget {
+                background-color: #3c3c3c;
+                alternate-background-color: #404040;
+                border: 1px solid #555555;
+                gridline-color: #555555;
+                color: #ffffff;
+            }
+            QTableWidget::item {
+                padding: 5px;
+                border: none;
+            }
+            QTableWidget::item:selected {
+                background-color: #4a4a4a;
+            }
+            QHeaderView::section {
+                background-color: #4a4a4a;
+                border: 1px solid #555555;
+                padding: 5px;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            QTextEdit {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                color: #ffffff;
+            }
+            QCheckBox {
+                color: #ffffff;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a4a4a;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC41IDguNUwyIDYiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+);
+            }
+        """)
 
     def connect_signals(self):
-        self.start_btn.clicked.connect(self.start_simulation)
-        # Use lambdas so the currently assigned thread instance is used (supports recreation)
-        self.pause_btn.clicked.connect(lambda: self.seeder_thread.pause() if self.seeder_thread is not None else None)
-        self.resume_btn.clicked.connect(lambda: self.seeder_thread.resume() if self.seeder_thread is not None else None)
-        self.stop_btn.clicked.connect(self.stop_simulation)
-        self.reset_btn.clicked.connect(self.reset_simulation)
-        self.export_btn.clicked.connect(self.export_json)
-        self.load_btn.clicked.connect(self.load_config)
-        self.browse_btn.clicked.connect(self.load_file)
-        self.add_param_btn.clicked.connect(self.add_parameter)
-        self.remove_param_btn.clicked.connect(self.remove_parameter)
-        self.edit_param_btn.clicked.connect(self.edit_parameter)
+        self.start_btn.clicked.connect(self.on_start)
+        self.pause_btn.clicked.connect(self.on_pause)
+        self.resume_btn.clicked.connect(self.on_resume)
+        self.stop_btn.clicked.connect(self.on_reset)
+        self.export_btn.clicked.connect(self.on_export_config)
+        self.load_btn.clicked.connect(self.on_load_config)
+        self.browse_btn.clicked.connect(self.on_browse_file)
+        self.add_param_btn.clicked.connect(self.on_add_param)
+        self.edit_param_btn.clicked.connect(self.on_edit_param)
+        self.remove_param_btn.clicked.connect(self.on_remove_param)
+        self.graph_options_btn.clicked.connect(self.waveform_plot._show_graph_popup)
 
-        # Note: thread signal wiring is done in setup_threads so threads may be recreated
-        self.signals.sample_generated.connect(self.update_plot_and_table)
-        self.signals.error.connect(lambda msg: self.log_view.add_log(msg, "ERROR"))
-
-    def start_simulation(self):
-        # Do not start simulation without parameters
-        if not self.parameter_list.parameters:
-            self.log_view.add_log("Cannot start simulation: no parameters loaded", "ERROR")
+    def on_start(self):
+        if not self.parameters:
+            self.log.append("No parameters loaded")
             return
+        # Allow simulation to start even without .dat file when parameters are manually added
+        if not self.dat_buffer:
+            self.log.append("No .dat file loaded - using empty buffers for simulation")
+        
+        ip = self.multicast_ip_edit.text()
+        port = int(self.port_edit.text())
+        self.sender_thread = SenderThread(group=ip, port=port)
+        self.sender_thread.start()
+        
+        start_time = float(self.start_time_edit.text())
+        end_time = float(self.end_time_edit.text())
+        hz = float(self.hz_combo.currentText())
+        
+        self.seeder_thread = SeederThread(
+            params_getter=lambda: self.parameters,
+            seeding_engine=self.seeding_engine,
+            dat_buffer=self.dat_buffer,
+            start_time=start_time,
+            end_time=end_time,
+            hz=hz
+        )
+        self.seeder_thread.record_ready.connect(self.sender_thread.enqueue)
+        self.seeder_thread.record_ready.connect(self.on_record_ready)
+        self.seeder_thread.record_ready.connect(self.update_current_time)  # Update current time from seeder
+        self.seeder_thread.error.connect(self.log.append)
+        self.sender_thread.record_sent.connect(self.update_records_sent)
+        
+        # Connect seeding engine signals for real-time parameter updates
+        self.seeding_engine.sample_generated.connect(self.param_table.update_instantaneous)
+        self.seeder_thread.start()
 
-        # Ensure threads exist (recreate if needed)
-        if self.seeder_thread is None or self.sender_thread is None:
-            self.setup_threads()
+    def on_pause(self):
+        """Pause both seeder and sender threads"""
+        if self.seeder_thread:
+            self.seeder_thread.pause()
+        if self.sender_thread:
+            self.sender_thread.pause()
+        self.log.append("Simulation paused")
 
-        # Prevent starting if already running
-        try:
-            if getattr(self.seeder_thread, 'isRunning', lambda: False)() and self.seeder_thread.isRunning():
-                self.log_view.add_log("Simulation already running", "WARNING")
-                return
-        except Exception:
-            pass
+    def on_resume(self):
+        """Resume both seeder and sender threads"""
+        if self.seeder_thread:
+            self.seeder_thread.resume()
+        if self.sender_thread:
+            self.sender_thread.resume()
+        self.log.append("Simulation resumed")
 
-        try:
-            self.seeder_thread.start_time = float(self.start_edit.text())
-            self.seeder_thread.end_time = float(self.end_edit.text())
-            self.seeder_thread.hz = self.hz_spin.value()
-            self.seeder_thread.interval = int(1000 / self.seeder_thread.hz)
-            ip = self.multicast_ip_edit.text()
-            port = self.port_spin.value()
-            self.multicast_sender.close()
-            self.multicast_sender = MulticastSender(ip, port)
-            self.sender_thread.multicast_sender = self.multicast_sender
-            self.seeder_thread.start()
-            self.sender_thread.start()
-            self.log_view.add_log("Simulation started", "INFO")
-        except ValueError as e:
-            self.log_view.add_log(str(e), "ERROR")
-
-    def stop_simulation(self):
-        if self.seeder_thread is not None:
+    def on_reset(self):
+        """Reset the simulation to initial state"""
+        if self.seeder_thread:
             self.seeder_thread.stop()
-        if self.sender_thread is not None:
+        if self.sender_thread:
             self.sender_thread.stop()
-        self.multicast_sender.close()
-        # Clear references so future starts recreate threads
-        self.seeder_thread = None
-        self.sender_thread = None
-        self.log_view.add_log("Simulation stopped and resources cleaned", "INFO")
-
-    def setup_threads(self):
-        """Create thread instances and wire their signals. Safe to call to recreate threads after stop/reset."""
-        # If existing threads exist, ensure they're stopped
-        if self.seeder_thread is not None:
-            try:
-                self.seeder_thread.stop()
-            except Exception:
-                pass
-        if self.sender_thread is not None:
-            try:
-                self.sender_thread.stop()
-            except Exception:
-                pass
-
-        # create fresh thread objects
-        self.seeder_thread = SeederThread(self.seeding_engine)
-        self.sender_thread = SenderThread(self.multicast_sender)
-
-        # wire inter-thread signals
-        self.seeder_thread.signals.record_ready.connect(self.sender_thread.on_record_ready)
-        self.sender_thread.signals.record_sent.connect(self.update_stats)
-        self.seeder_thread.signals.log_message.connect(self.log_view.add_log)
-        self.sender_thread.signals.log_message.connect(self.log_view.add_log)
-        self.sender_thread.signals.error.connect(lambda msg: self.log_view.add_log(msg, "ERROR"))
-
-    def reset_simulation(self):
-        """Stop any running threads, reset UI fields and recreate thread objects so the simulation can start fresh."""
-        # Stop threads
-        if self.seeder_thread is not None:
-            try:
-                self.seeder_thread.stop()
-            except Exception:
-                pass
-        if self.sender_thread is not None:
-            try:
-                self.sender_thread.stop()
-            except Exception:
-                pass
-
-        # Reset network to defaults
-        self.multicast_ip_edit.setText("239.0.0.1")
-        self.port_spin.setValue(12345)
-        # Reset time/config fields
-        self.start_edit.setText("-900.0")
-        self.end_edit.setText("1200.0")
-        self.hz_spin.setValue(2.0)
-
-        # Reset stats
-        self.current_time_label.setText("Current Time: 0")
+        
+        # Reset all counters and displays
+        self.current_time_label.setText("Current Time: 0 sec")
         self.records_sent_label.setText("Records Sent: 0")
-        self.bytes_sent = 0
-        self.bytes_sent_label.setText("Bytes Sent: 0")
+        
+        # Clear the waveform plot
+        self.waveform_plot.clear_plot()
+        
+        # Reset parameter table instantaneous values
+        for param in self.parameters:
+            self.param_table.update_instantaneous(param.name, 0.0, 0.0)
+        
+        self.log.append("Simulation reset to initial state")
 
-        # Recreate threads and re-wire signals
-        self.setup_threads()
-
-        self.log_view.add_log("Simulation reset to defaults", "INFO")
-
-    def update_stats(self, record_idx):
-        self.current_time_label.setText(f"Current Time: {self.seeder_thread.current_time:.1f}")
-        self.records_sent_label.setText(f"Records Sent: {record_idx + 1}")
-        self.bytes_sent += 1400 * 10  # approx per record
-        self.bytes_sent_label.setText(f"Bytes Sent: {self.bytes_sent}")
-
-    def update_plot_and_table(self, param_name, sample_time, value):
-        self.param_table.update_instantaneous(param_name, value, sample_time)
-        self.waveform_plot.update_curve(param_name, sample_time, value)
-
-    def export_json(self):
-        filename, _ = QFileDialog.getSaveFileName(self, "Export JSON", "", "JSON (*.json)")
+    def on_export_config(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Config", "", "JSON Files (*.json)")
         if filename:
-            config = self.parameter_list.to_dict()
-            save_config(filename, config)
-            self.log_view.add_log(f"Config exported to {filename}", "INFO")
+            settings = {
+                "start_time": float(self.start_time_edit.text()),
+                "end_time": float(self.end_time_edit.text()),
+                "hz": float(self.hz_combo.currentText())
+            }
+            self.config_manager.save_config(filename, self.parameters, settings)
 
-    def load_config(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Load Config", "", "JSON (*.json)")
+    def on_load_config(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Load Config", "", "JSON Files (*.json)")
         if filename:
-            config = load_config(filename)
-            self.parameter_list = ParameterList.from_dict(config)
-            self.param_table.update_table(self.parameter_list.parameters)
-            self.log_view.add_log(f"Config loaded from {filename}", "INFO")
+            settings, params = self.config_manager.load_config(filename)
+            self.parameters = params
+            self.param_table.load_parameters(params)
+            self.log.append(f"Config loaded from {filename}")
 
-    def load_file(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Load File", "", "CSV or Binary (*.csv *.bin)")
+    def on_browse_file(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Load .dat File", "", "DAT Files (*.dat)")
         if filename:
-            self.file_label.setText(filename)
             try:
-                params = load_parameters_from_file(filename)
-                self.parameter_list.parameters = params
-                self.param_table.update_table(params)
-                # Ensure waveform plot has curves for enabled parameters
-                for p in params:
-                    self.waveform_plot.add_parameter_curve(p)
-                    # Set marker/curve visibility according to parameter
-                    self.waveform_plot.toggle_curve(p.name, p.enabled)
-                self.log_view.add_log(f"Parameters loaded from {filename}", "INFO")
+                result = self.loader.load_dat(filename)
+                if isinstance(result, tuple):
+                    # New format with embedded parameters
+                    self.dat_buffer, parameters = result
+                    if parameters:
+                        self.parameters = parameters
+                        self.param_table.load_parameters(parameters)
+                        self.log.append(f"Loaded {filename} with {len(parameters)} embedded parameters")
+                        for param in parameters:
+                            self.log.append(f"  - {param.name} (Packet {param.packet_id}, Offset {param.offset})")
+                    else:
+                        self.log.append(f"Loaded {filename} (no embedded parameters)")
+                else:
+                    # Old format, binary data only
+                    self.dat_buffer = result
+                    self.log.append(f"Loaded {filename} (old format - no embedded parameters)")
+                    self.log.append("You can add parameters manually using the 'Add Parameter' button")
             except Exception as e:
-                self.log_view.add_log(str(e), "ERROR")
+                self.log.append(f"Error loading file: {str(e)}")
 
-    def add_parameter(self):
-        editor = ParameterEditorWindow()
-        if editor.exec_():
-            param = editor.get_parameter()
-            self.parameter_list.add(param)
-            self.param_table.add_row(param)
-            self.waveform_plot.add_parameter_curve(param)
-            self.log_view.add_log(f"Added parameter {param.name}", "INFO")
+    def on_add_param(self):
+        # Open parameter editor dialog for new parameter
+        dialog = ParameterEditorDialog(None, self)
+        if dialog.exec_() == ParameterEditorDialog.Accepted:
+            # Create new parameter with edited values
+            new_param = dialog.get_parameter()
+            new_param.sl_no = len(self.parameters) + 1
+            if not new_param.name:  # If no name provided, give a default
+                new_param.name = f"param_{len(self.parameters) + 1}"
+            self.parameters.append(new_param)
+            self.param_table.parameters_list = self.parameters  # Update reference
+            self.param_table.load_parameters(self.parameters)
+            self.log.append(f"Added parameter: {new_param.name}")
 
-    def remove_parameter(self):
-        row = self.param_table.currentRow()
-        if row >= 0:
-            name = self.param_table.item(row, 1).text()
-            del self.parameter_list.parameters[row]
-            self.param_table.removeRow(row)
-            self.waveform_plot.remove_curve(name)
-            self.log_view.add_log(f"Removed parameter {name}", "INFO")
+    def on_edit_param(self):
+        # Get selected row
+        current_row = self.param_table.currentRow()
+        if current_row >= 0 and current_row < len(self.parameters):
+            param = self.parameters[current_row]
+            # Open parameter editor dialog
+            dialog = ParameterEditorDialog(param, self)
+            if dialog.exec_() == ParameterEditorDialog.Accepted:
+                # Update the parameter with edited values
+                edited_param = dialog.get_parameter()
+                self.parameters[current_row] = edited_param
+                self.param_table.load_parameters(self.parameters)
+                self.log.append(f"Updated parameter: {edited_param.name}")
+        else:
+            self.log.append("Please select a parameter to edit")
 
-    def edit_parameter(self):
-        row = self.param_table.currentRow()
-        if row >= 0:
-            param = self.parameter_list.parameters[row]
-            editor = ParameterEditorWindow(param)
-            if editor.exec_():
-                new_param = editor.get_parameter()
-                self.parameter_list.parameters[row] = new_param
-                self.param_table.update_row(row, new_param)
-                self.waveform_plot.update_curve_settings(new_param)  # Assume method to refresh
-                self.log_view.add_log(f"Edited parameter {new_param.name}", "INFO")
+    def on_remove_param(self):
+        # Get selected row
+        current_row = self.param_table.currentRow()
+        if current_row >= 0 and current_row < len(self.parameters):
+            param = self.parameters.pop(current_row)
+            self.param_table.parameters_list = self.parameters  # Update reference
+            self.param_table.load_parameters(self.parameters)
+            self.log.append(f"Removed parameter: {param.name}")
+        else:
+            self.log.append("Please select a parameter to remove")
+
+    def on_record_ready(self, record_idx, record_time, packets):
+        # Get current time increment based on Hz setting
+        hz = float(self.hz_combo.currentText())
+        time_increment = 1.0 / hz
+        
+        # Update GUI with new record data
+        self.waveform_plot.update_waveform(self.parameters, record_time, time_increment)
+        
+        # Update parameter table with instantaneous values
+        for param in self.parameters:
+            if param.enabled:
+                from core.waveform import make_waveform
+                wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
+                
+                if param.samples_per_500ms == 1:  # Major cycle - single value
+                    value = param.fixed_value if param.fixed_value is not None else 0.0
+                    self.param_table.update_instantaneous(param.name, value, record_time, time_increment)
+                else:  # Minor cycle - 5 samples
+                    # Calculate all 5 sample values with correct spacing
+                    sample_values = []
+                    sample_spacing = time_increment / 5.0
+                    for i in range(5):
+                        sample_time = record_time + i * sample_spacing
+                        value = wf.value(sample_time, param.min_v, param.max_v)
+                        sample_values.append(value)
+                    
+                    # Update table with all 5 values
+                    self.param_table.update_instantaneous(param.name, sample_values, record_time, time_increment)
+
+    def update_current_time(self, record_idx, record_time, packets):
+        """Update current time from seeder thread"""
+        self.current_time_label.setText(f"Current Time: {record_time:.1f} sec")
+
+    def update_records_sent(self, record_idx, time):
+        """Update records sent count from sender thread"""
+        self.records_sent_label.setText(f"Records Sent: {record_idx + 1}")

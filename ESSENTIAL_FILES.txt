@@ -1,0 +1,394 @@
+# Essential Files and Folders Required to Run main.py
+# Telemetry Simulator - Minimum Required Structure
+
+## Root Files
+main.py                           # Main application entry point
+requirements.txt                   # Python dependencies
+
+## Core Module (core/)
+core/
+├── __init__.py                   # Package marker (can be empty)
+├── models.py                     # Parameter and data classes
+├── seeder.py                     # Data generation engine
+├── packet_buffer.py              # Binary packet management
+├── waveform.py                   # Waveform generation functions
+└── loader.py                     # File loading utilities
+
+## GUI Module (gui/)
+gui/
+├── __init__.py                   # Package marker (can be empty)
+├── main_window.py                # Main application window
+├── parameter_editor.py           # Parameter editing dialog
+├── dialogs.py                    # Simple dialog utilities
+└── widgets/
+    ├── __init__.py               # Package marker (can be empty)
+    ├── param_table.py            # Parameter table widget
+    └── waveform_plot.py          # Real-time plotting widget
+
+## Threading Module (threads/)
+threads/
+├── __init__.py                   # Package marker (can be empty)
+├── seeder_thread.py              # Background data generation thread
+├── sender_thread.py              # Background UDP transmission thread
+└── worker_signals.py             # Qt signal definitions
+
+## Utilities Module (utils/)
+utils/
+├── __init__.py                   # Package marker (can be empty)
+└── config.py                     # Configuration management
+
+## External Dependencies (installed via pip)
+PyQt5                            # GUI framework
+pyqtgraph                        # Real-time plotting
+numpy                            # Numerical operations
+
+## Optional Files (for enhanced functionality)
+test_data.dat                    # Sample telemetry data file
+test_params.csv                  # Sample parameter definitions
+resources/
+└── style.qss                    # Additional styling (optional)
+
+## Total File Count: 15 essential files + 3 optional files
+
+## Directory Structure Summary:
+```
+ddr4s/
+├── main.py
+├── requirements.txt
+├── core/
+│   ├── __init__.py
+│   ├── models.py
+│   ├── seeder.py
+│   ├── packet_buffer.py
+│   ├── waveform.py
+│   └── loader.py
+├── gui/
+│   ├── __init__.py
+│   ├── main_window.py
+│   ├── parameter_editor.py
+│   ├── dialogs.py
+│   └── widgets/
+│       ├── __init__.py
+│       ├── param_table.py
+│       └── waveform_plot.py
+├── threads/
+│   ├── __init__.py
+│   ├── seeder_thread.py
+│   ├── sender_thread.py
+│   └── worker_signals.py
+├── utils/
+│   ├── __init__.py
+│   └── config.py
+└── ESSENTIAL_FILES.txt          # This file
+```
+
+## Installation Commands:
+1. pip install -r requirements.txt
+2. python main.py
+
+## Notes:
+- All __init__.py files can be empty but are required for Python package structure
+- The application will work without test_data.dat and test_params.csv (can create parameters manually)
+- resources/style.qss is optional (theme is applied via code)
+- All other files in the repository are for testing, documentation, or additional features
+
+## Import Dependency Chain:
+main.py
+└── gui.main_window.MainWindow
+    ├── gui.widgets.param_table.ParameterTableWidget
+    ├── gui.widgets.waveform_plot.WaveformPlotWidget
+    │   └── core.waveform.make_waveform
+    ├── gui.parameter_editor.ParameterEditorDialog
+    │   └── core.models.Parameter
+    ├── threads.seeder_thread.SeederThread
+    │   └── core.seeder.SeedingEngine
+    │       ├── core.packet_buffer.PacketBuffer
+    │       └── core.waveform.make_waveform
+    ├── threads.sender_thread.SenderThread
+    ├── core.seeder.SeedingEngine
+    ├── core.loader.Loader
+    │   └── core.models.Parameter
+    └── utils.config.ConfigManager
+
+## DETAILED FILE EXPLANATIONS:
+
+### ROOT FILES:
+
+#### main.py
+**Purpose**: Application entry point and initialization
+**Key Components**:
+- `QApplication` - PyQt5 application instance
+- `app.setStyle('Fusion')` - Sets modern UI style for better dark theme support
+- `MainWindow()` - Creates and displays the main application window
+- `app.exec_()` - Starts the Qt event loop
+
+**Keywords**: QApplication, Fusion style, MainWindow, event loop
+
+#### requirements.txt
+**Purpose**: Python package dependencies
+**Key Components**:
+- `PyQt5` - GUI framework for desktop applications
+- `pyqtgraph` - Real-time plotting and visualization library
+- `numpy` - Numerical computing library for array operations
+
+**Keywords**: PyQt5, pyqtgraph, numpy, dependencies
+
+### CORE MODULE:
+
+#### core/__init__.py
+**Purpose**: Python package marker (can be empty)
+**Key Components**: Makes 'core' directory a Python package
+**Keywords**: package marker, __init__.py
+
+#### core/models.py
+**Purpose**: Data classes and structures for telemetry parameters
+**Key Components**:
+- `@dataclass Parameter` - Main parameter data structure with fields:
+  - `name`, `packet_id`, `offset`, `dtype` - Basic identification
+  - `min_v`, `max_v` - Value ranges for scaling
+  - `waveform`, `freq`, `phase` - Waveform generation parameters
+  - `samples_per_500ms` - Major (1) vs Minor (5) cycle timing
+  - `enabled`, `enabled_in_graph` - Control flags
+  - `start_time`, `end_time` - Time window for parameter activation
+  - `fixed_value` - For major cycle parameters
+  - `bit_width` - For digital parameters (8, 16, 32 bits)
+- `ParameterList` - Container class for managing parameter collections
+- `RecordSpec` - Configuration for packet structure and timing
+
+**Keywords**: dataclass, Parameter, packet_id, offset, dtype, waveform, samples_per_500ms
+
+#### core/seeder.py
+**Purpose**: Core data generation engine that creates telemetry data
+**Key Components**:
+- `SeedingEngine` class - Main data generation controller
+- `seed_record()` method - Generates one complete telemetry record
+- **Major Cycle Logic**: Single value per record (fixed_value or 0.0)
+- **Minor Cycle Logic**: 5 samples spread across time_increment period
+- **Data Insertion**: Calls PacketBuffer methods based on parameter type
+- **Signal Emission**: Emits sample_generated signal for GUI updates
+- **Time-based Filtering**: Only processes parameters within start_time/end_time window
+
+**Keywords**: SeedingEngine, seed_record, major_cycle, minor_cycle, time_increment, sample_generated
+
+#### core/packet_buffer.py
+**Purpose**: Binary packet management and data insertion
+**Key Components**:
+- `PacketBuffer` class - Manages 10 packets of 1400 bytes each
+- **Data Insertion Methods**:
+  - `insert_float()` - 4-byte IEEE 754 floating point values
+  - `insert_uint8()` - 8-bit unsigned integers
+  - `insert_uint16()` - 16-bit unsigned integers
+  - `insert_uint32()` - 32-bit unsigned integers
+  - `insert_uint64()` - 64-bit unsigned integers
+- `set_record_time()` - Writes timestamp to all packets at offset 24
+- `get_packets()` - Returns list of completed packets as bytes
+- **Alignment**: Ensures packet length is 4-byte aligned
+
+**Keywords**: PacketBuffer, insert_float, insert_uint8, insert_uint16, insert_uint32, set_record_time
+
+#### core/waveform.py
+**Purpose**: Mathematical waveform generation functions
+**Key Components**:
+- `make_waveform()` - Factory function that returns waveform class instance
+- **Waveform Classes**:
+  - `Sine` - Sinusoidal waves using sin(2πft + φ)
+  - `Triangle` - Triangular waves with linear ramps
+  - `Square` - Square waves using sign of sine function
+  - `Step` - Step functions (discrete on/off)
+  - `Noise` - Random uniform distribution
+- **Base Class**: `BaseWaveform` with `value()` method that normalizes to [-1,1] then scales to [min_v, max_v]
+- **Parameters**: `freq` (frequency), `phase` (phase offset), `full_sweep` (range control)
+
+**Keywords**: make_waveform, Sine, Triangle, Square, Step, Noise, frequency, phase, full_sweep
+
+#### core/loader.py
+**Purpose**: File loading utilities for .dat and .csv parameter files
+**Key Components**:
+- `Loader` class - File loading controller
+- `load_dat()` method - Loads binary .dat files with embedded parameters
+  - **New Format**: Reads parameter count, parameter definitions, separator, binary data
+  - **Old Format**: Falls back to binary-only loading
+  - **Parameter Parsing**: Unpacks binary data using struct module
+- `load_csv()` method - Loads CSV parameter definition files
+  - **CSV Parsing**: Uses csv.DictReader for flexible column handling
+  - **Parameter Creation**: Converts CSV rows to Parameter objects
+
+**Keywords**: Loader, load_dat, load_csv, struct.unpack, csv.DictReader, END_PARAMS
+
+### GUI MODULE:
+
+#### gui/__init__.py
+**Purpose**: Python package marker (can be empty)
+**Keywords**: package marker, __init__.py
+
+#### gui/main_window.py
+**Purpose**: Main application window and primary user interface
+**Key Components**:
+- `MainWindow` class - Main application controller
+- **UI Layout**:
+  - Top bar with control buttons (Start, Pause, Resume, Reset, Export, Load, Browse)
+  - Time & Hz controls (start time, end time, transmission rate)
+  - Live statistics display (current time, records sent, packets per record)
+  - Network settings (multicast IP, port)
+  - Parameter table and waveform plot (split view)
+  - Log display at bottom
+- **Core Methods**:
+  - `on_start()` - Initializes and starts seeder/sender threads
+  - `on_pause()`, `on_resume()`, `on_reset()` - Simulation control
+  - `on_record_ready()` - Updates GUI with new telemetry data
+  - `apply_grey_theme()` - Applies dark grey color scheme
+- **Thread Management**: Creates and manages SeederThread and SenderThread
+- **Signal Connections**: Connects thread signals to GUI update methods
+
+**Keywords**: MainWindow, QMainWindow, QSplitter, QGroupBox, signal connections, thread management
+
+#### gui/parameter_editor.py
+**Purpose**: Dialog for creating and editing telemetry parameters
+**Key Components**:
+- `ParameterEditorDialog` class - Modal dialog for parameter editing
+- **Tabbed Interface**:
+  - Basic Settings: Name, packet ID, offset, cycle type, bit width
+  - Waveform: Waveform type, frequency, phase, min/max values
+  - Timing: Start time, end time, fixed value
+- **Cycle Type Logic**: Major (1 sample) = Bit type, Minor (5 samples) = Float type
+- **Preview Functionality**: `preview_parameter()` - Shows 10-second waveform preview
+- **Form Validation**: Ensures proper parameter configuration
+- **Theme Integration**: Applies grey theme matching main window
+
+**Keywords**: ParameterEditorDialog, QDialog, QTabWidget, cycle_type, preview_parameter, form validation
+
+#### gui/dialogs.py
+**Purpose**: Simple reusable dialog utilities
+**Key Components**:
+- `confirm_dialog()` function - Shows confirmation message box
+- Uses `QMessageBox.question()` for Yes/No dialogs
+- Returns boolean result for user choice
+
+**Keywords**: confirm_dialog, QMessageBox, question dialog
+
+#### gui/widgets/__init__.py
+**Purpose**: Python package marker (can be empty)
+**Keywords**: package marker, __init__.py
+
+#### gui/widgets/param_table.py
+**Purpose**: Real-time parameter value display table
+**Key Components**:
+- `ParameterTableWidget` class - Custom QTableWidget for parameter display
+- **Table Columns**: Show in Graph, Name, Packet ID, Type, Offset, Length, Inst. Value, Time
+- **Real-time Updates**: `update_instantaneous()` method updates values as data arrives
+- **Major Cycle Display**: Shows single value and timestamp
+- **Minor Cycle Display**: Shows 5 values separated by " | " with corresponding times
+- **Graph Control**: Checkbox in first column controls parameter visibility in plot
+- **Dynamic Timing**: Uses time_increment parameter for correct minor cycle spacing
+
+**Keywords**: ParameterTableWidget, QTableWidget, update_instantaneous, major_cycle, minor_cycle, time_increment
+
+#### gui/widgets/waveform_plot.py
+**Purpose**: Real-time waveform plotting and visualization
+**Key Components**:
+- `WaveformPlotWidget` class - Custom pyqtgraph.PlotWidget
+- **Real-time Plotting**: `update_waveform()` method updates plots as data arrives
+- **Parameter Management**: `add_param()` creates new parameter curves with unique colors/symbols
+- **Data Storage**: Uses deque for efficient real-time data management (1000 point limit)
+- **Visual Features**:
+  - Black background for professional appearance
+  - Different symbols for each parameter (o, s, ^, v, d, p, *, h, H, +)
+  - Color cycling for multiple parameters
+  - Real-time marker showing current position
+  - Legend for parameter identification
+- **Minor Cycle Support**: Plots all 5 samples with correct time spacing
+- **Performance**: Limits data points to prevent memory issues
+
+**Keywords**: WaveformPlotWidget, pyqtgraph, PlotWidget, update_waveform, deque, real-time plotting
+
+### THREADING MODULE:
+
+#### threads/__init__.py
+**Purpose**: Python package marker (can be empty)
+**Keywords**: package marker, __init__.py
+
+#### threads/seeder_thread.py
+**Purpose**: Background thread for generating telemetry data at specified rate
+**Key Components**:
+- `SeederThread` class - QThread for data generation
+- **Timing Logic**: 
+  - `time_increment = 1.0 / hz` - Calculates time advancement per record
+  - Sleeps for `time_increment` seconds between records
+  - Advances `current_time` by `time_increment` each iteration
+- **Data Generation**: Calls `SeedingEngine.seed_record()` for each time step
+- **Signal Emission**: Emits `record_ready` signal with record data
+- **Control Methods**: `pause()`, `resume()`, `stop()` for simulation control
+- **Error Handling**: Catches and emits exceptions via `error` signal
+
+**Keywords**: SeederThread, QThread, time_increment, record_ready, pause, resume, stop
+
+#### threads/sender_thread.py
+**Purpose**: Background thread for UDP multicast transmission
+**Key Components**:
+- `SenderThread` class - QThread for network transmission
+- **Socket Management**: Creates UDP socket with multicast TTL settings
+- **Queue System**: `enqueue()` method queues records for transmission
+- **Transmission Loop**: Processes queued records and sends via UDP multicast
+- **Statistics**: Tracks total bytes sent and emits statistics signals
+- **Control Methods**: `pause()`, `resume()`, `stop()` for transmission control
+- **Error Handling**: Catches network errors and emits via `error` signal
+
+**Keywords**: SenderThread, UDP, multicast, socket, enqueue, record_sent, bytes_sent_signal
+
+#### threads/worker_signals.py
+**Purpose**: Qt signal definitions for thread communication
+**Key Components**:
+- `WorkerSignals` class - QObject containing all signal definitions
+- **Signal Types**:
+  - `record_ready` - Emitted when new record is generated
+  - `packet_sent` - Emitted when individual packet is sent
+  - `record_sent` - Emitted when complete record is transmitted
+  - `sample_generated` - Emitted for real-time parameter updates
+  - `error` - Emitted when errors occur
+  - `log_message` - Emitted for logging messages
+
+**Keywords**: WorkerSignals, pyqtSignal, record_ready, packet_sent, error, log_message
+
+### UTILITIES MODULE:
+
+#### utils/__init__.py
+**Purpose**: Python package marker (can be empty)
+**Keywords**: package marker, __init__.py
+
+#### utils/config.py
+**Purpose**: Configuration management for saving/loading settings
+**Key Components**:
+- `ConfigManager` class - Handles configuration persistence
+- `save_config()` method - Saves parameters and settings to JSON file
+- `load_config()` method - Loads parameters and settings from JSON file
+- **Data Structure**: JSON format with simulation_settings and parameters arrays
+- **Parameter Serialization**: Uses Parameter.to_dict() and Parameter.from_dict() methods
+
+**Keywords**: ConfigManager, save_config, load_config, JSON, simulation_settings, parameters
+
+## KEY ARCHITECTURAL CONCEPTS:
+
+### Data Flow:
+1. **User Input** → MainWindow → ParameterEditorDialog
+2. **Parameter Creation** → ParameterTableWidget → WaveformPlotWidget
+3. **Simulation Start** → SeederThread → SeedingEngine → PacketBuffer
+4. **Data Generation** → SenderThread → UDP Multicast
+5. **Real-time Updates** → GUI Components via Qt Signals
+
+### Threading Model:
+- **Main Thread**: GUI updates and user interaction
+- **SeederThread**: Data generation at specified Hz rate
+- **SenderThread**: Network transmission of generated data
+- **Signal Communication**: Qt signals for thread-safe GUI updates
+
+### Timing System:
+- **Hz-based Progression**: Time advances by 1/Hz seconds per record
+- **Major Cycle**: 1 sample per record (fixed values)
+- **Minor Cycle**: 5 samples per record (waveform generation)
+- **Sample Spacing**: Minor cycle samples spread across time_increment period
+
+### Data Structures:
+- **Parameter**: Complete telemetry parameter definition
+- **PacketBuffer**: Binary packet management (10 × 1400 bytes)
+- **Record**: Complete telemetry record with all parameters
+- **Waveform**: Mathematical function generators

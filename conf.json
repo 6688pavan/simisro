@@ -1,0 +1,29 @@
+{
+    "simulation_settings": {
+        "start_time": -900.0,
+        "end_time": 1200.0,
+        "hz": 50.0
+    },
+    "parameters": [
+        {
+            "sl_no": 1,
+            "name": "param_1",
+            "packet_id": 0,
+            "offset": 183,
+            "dtype": "float",
+            "min_v": 20.0,
+            "max_v": 700.0,
+            "waveform": "Sine",
+            "freq": 20.0,
+            "phase": 0.013962634015954637,
+            "full_sweep": true,
+            "samples_per_500ms": 5,
+            "enabled_in_graph": true,
+            "enabled": true,
+            "start_time": -900.0,
+            "end_time": 1200.0,
+            "fixed_value": 0.0,
+            "bit_width": 8
+        }
+    ]
+}
