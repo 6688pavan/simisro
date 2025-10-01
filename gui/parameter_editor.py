@@ -143,16 +143,16 @@ class ParameterEditorDialog(QDialog):
             QCheckBox::indicator {
                 width: 16px;
                 height: 16px;
+                border-radius: 3px;
+                border: 1px solid #555555;
             }
+            /* Red filled when not selected */
             QCheckBox::indicator:unchecked {
-                background-color: #3c3c3c;
-                border: 1px solid #555555;
-                border-radius: 3px;
+                background-color: #C0392B; /* red */
             }
+            /* Green filled with visible white tick when selected */
             QCheckBox::indicator:checked {
-                background-color: #4a4a4a;
-                border: 1px solid #555555;
-                border-radius: 3px;
+                background-color: #27AE60; /* green */
                 image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC41IDguNUwyIDYiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+);
             }
         """)
@@ -255,12 +255,7 @@ class ParameterEditorDialog(QDialog):
         self.full_sweep_check.setChecked(self.param.full_sweep if self.param else True)
         form.addRow("Full Sweep:", self.full_sweep_check)
         
-        # Fixed value (for major cycle)
-        self.fixed_value_spin = QDoubleSpinBox()
-        self.fixed_value_spin.setRange(-10000.0, 10000.0)
-        self.fixed_value_spin.setDecimals(3)
-        self.fixed_value_spin.setValue(self.param.fixed_value if self.param and self.param.fixed_value is not None else 0.0)
-        form.addRow("Fixed Value:", self.fixed_value_spin)
+        # For bit-major, value toggles strictly between Min and Max; no fixed value control
         
         tab.setLayout(form)
         self.tab_widget.addTab(tab, "Waveform")
@@ -379,6 +374,6 @@ class ParameterEditorDialog(QDialog):
             enabled=True,  # All parameters are enabled by default
             start_time=self.start_time_spin.value(),
             end_time=self.end_time_spin.value(),
-            fixed_value=self.fixed_value_spin.value(),
+            fixed_value=None,
             bit_width=self.bit_width_spin.value()
         )

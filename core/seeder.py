@@ -23,31 +23,44 @@ class SeedingEngine(QObject):
             if not param.enabled or record_time < param.start_time or record_time > param.end_time:
                 continue
             if param.samples_per_500ms == 1:  # Major cycle
-                value = param.fixed_value if param.fixed_value is not None else 0.0
                 if param.dtype == "float":
+                    # For float major, keep fixed value behavior if provided, else 0.0
+                    value = param.fixed_value if param.fixed_value is not None else 0.0
                     buffer.insert_float(param.packet_id, param.offset, value)
-                else:  # Digital
+                    if param.enabled_in_graph:
+                        self.sample_generated.emit(param.name, value, record_time)
+                else:  # Digital (bit) -> toggle strictly between min_v and max_v using waveform threshold
+                    wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
+                    analog = wf.value(record_time, param.min_v, param.max_v)
+                    threshold = (param.min_v + param.max_v) / 2.0
+                    value = param.min_v if analog < threshold else param.max_v
                     if param.bit_width == 8:
                         buffer.insert_uint8(param.packet_id, param.offset, int(value))
                     elif param.bit_width == 16:
                         buffer.insert_uint16(param.packet_id, param.offset, int(value))
                     else:  # 32 bits
                         buffer.insert_uint32(param.packet_id, param.offset, int(value))
-                if param.enabled_in_graph:
-                    self.sample_generated.emit(param.name, value, record_time)
+                    if param.enabled_in_graph:
+                        self.sample_generated.emit(param.name, value, record_time)
             else:  # Minor cycle (5 samples)
                 wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
                 sample_values = []
                 sample_spacing = time_increment / 5.0  # Spread 5 samples across the time increment
                 for i in range(5):
                     sample_time = record_time + i * sample_spacing
-                    value = wf.value(sample_time, param.min_v, param.max_v)
-                    sample_values.append(value)
-                    offset = param.offset + (i * 4 if param.dtype == "float" else i * 8)
                     if param.dtype == "float":
+                        value = wf.value(sample_time, param.min_v, param.max_v)
+                        sample_values.append(value)
+                        offset = param.offset + (i * 4)
                         buffer.insert_float(param.packet_id, offset, value)
                     else:
-                        buffer.insert_uint64(param.packet_id, offset, int(value) & 0xFF)  # 8-bit value in 8 bytes
+                        # Digital minor: still toggle min/max discretely at each sub-sample
+                        analog = wf.value(sample_time, param.min_v, param.max_v)
+                        threshold = (param.min_v + param.max_v) / 2.0
+                        value = param.min_v if analog < threshold else param.max_v
+                        sample_values.append(value)
+                        offset = param.offset + (i * 8)
+                        buffer.insert_uint64(param.packet_id, offset, int(value) & 0xFF)
                 if param.enabled_in_graph:
                     self.sample_generated.emit(param.name, sample_values, record_time)
         return buffer

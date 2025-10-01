@@ -255,16 +255,16 @@ class MainWindow(QMainWindow):
             QCheckBox::indicator {
                 width: 16px;
                 height: 16px;
+                border-radius: 3px;
+                border: 1px solid #555555;
             }
+            /* Red filled when not selected */
             QCheckBox::indicator:unchecked {
-                background-color: #3c3c3c;
-                border: 1px solid #555555;
-                border-radius: 3px;
+                background-color: #C0392B; /* red */
             }
+            /* Green filled with visible white tick when selected */
             QCheckBox::indicator:checked {
-                background-color: #4a4a4a;
-                border: 1px solid #555555;
-                border-radius: 3px;
+                background-color: #27AE60; /* green */
                 image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC41IDguNUwyIDYiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+);
             }
         """)
@@ -281,6 +281,8 @@ class MainWindow(QMainWindow):
         self.edit_param_btn.clicked.connect(self.on_edit_param)
         self.remove_param_btn.clicked.connect(self.on_remove_param)
         self.graph_options_btn.clicked.connect(self.waveform_plot._show_graph_popup)
+        # Propagate Hz changes dynamically
+        self.hz_combo.currentTextChanged.connect(self.on_hz_changed)
 
     def on_start(self):
         if not self.parameters:
@@ -315,7 +317,24 @@ class MainWindow(QMainWindow):
         
         # Connect seeding engine signals for real-time parameter updates
         self.seeding_engine.sample_generated.connect(self.param_table.update_instantaneous)
+        # Reset live stats on start
+        self.current_time_label.setText("Current Time: 0 sec")
+        self.records_sent_label.setText("Records Sent: 0")
         self.seeder_thread.start()
+
+    def on_hz_changed(self, _text: str):
+        """Update running/paused seeder thread when Hz selection changes."""
+        self._apply_hz_from_ui()
+
+    def _apply_hz_from_ui(self):
+        """Apply the current Hz value from the UI to the seeder thread, if present."""
+        try:
+            hz = float(self.hz_combo.currentText())
+        except Exception:
+            hz = None
+        if self.seeder_thread and hz is not None:
+            # SeederThread.set_hz handles validation
+            self.seeder_thread.set_hz(hz)
 
     def on_pause(self):
         """Pause both seeder and sender threads"""
@@ -328,6 +347,8 @@ class MainWindow(QMainWindow):
     def on_resume(self):
         """Resume both seeder and sender threads"""
         if self.seeder_thread:
+            # Ensure latest Hz is applied before resuming
+            self._apply_hz_from_ui()
             self.seeder_thread.resume()
         if self.sender_thread:
             self.sender_thread.resume()
@@ -441,8 +462,16 @@ class MainWindow(QMainWindow):
         hz = float(self.hz_combo.currentText())
         time_increment = 1.0 / hz
         
-        # Update GUI with new record data
-        self.waveform_plot.update_waveform(self.parameters, record_time, time_increment)
+        # Update GUI with new record data (only plot params within their timing window)
+        filtered_params = []
+        for p in self.parameters:
+            within_start = True if (p.start_time is None) else (record_time >= p.start_time)
+            within_end = True if (p.end_time is None) else (record_time <= p.end_time)
+            if within_start and within_end:
+                filtered_params.append(p)
+        self.waveform_plot.update_waveform(filtered_params, record_time, time_increment)
+        # Reflect generated record count immediately for responsiveness
+        self.records_sent_label.setText(f"Records Sent: {record_idx + 1}")
         
         # Update parameter table with instantaneous values
         for param in self.parameters:
@@ -450,8 +479,20 @@ class MainWindow(QMainWindow):
                 from core.waveform import make_waveform
                 wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
                 
+                # Enforce per-parameter timing window for UI updates as well
+                within_start = True if (param.start_time is None) else (record_time >= param.start_time)
+                within_end = True if (param.end_time is None) else (record_time <= param.end_time)
+                if not (within_start and within_end):
+                    continue
+
                 if param.samples_per_500ms == 1:  # Major cycle - single value
-                    value = param.fixed_value if param.fixed_value is not None else 0.0
+                    if param.dtype == "float":
+                        value = 0.0  # No fixed value UI anymore; keep 0.0 default for float major
+                    else:
+                        # Bit-major toggles strictly between min and max
+                        analog = wf.value(record_time, param.min_v, param.max_v)
+                        threshold = (param.min_v + param.max_v) / 2.0
+                        value = param.min_v if analog < threshold else param.max_v
                     self.param_table.update_instantaneous(param.name, value, record_time, time_increment)
                 else:  # Minor cycle - 5 samples
                     # Calculate all 5 sample values with correct spacing

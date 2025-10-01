@@ -20,13 +20,14 @@ class SeederThread(QThread):
         self.running = True
         current_time = self.start_time
         record_idx = 0
-        time_increment = 1.0 / self.hz  # Time increment per record based on Hz
         
         while self.running and current_time <= self.end_time:
             if self.paused:
                 time.sleep(0.05)
                 continue
             try:
+                # Compute time increment dynamically so runtime Hz changes take effect
+                time_increment = 1.0 / self.hz if self.hz != 0 else 0.0
                 buffer = self.seeding_engine.seed_record(self.params_getter(), current_time, self.dat_buffer, time_increment)
                 packets = buffer.get_packets()
                 self.record_ready.emit(record_idx, current_time, packets)
@@ -52,3 +53,15 @@ class SeederThread(QThread):
         self.running = False
         self.quit()
         self.wait()
+
+    def set_hz(self, hz: float):
+        """Update the transmission rate (records per second)."""
+        try:
+            hz_value = float(hz)
+            # Prevent zero or negative leading to invalid sleep
+            if hz_value <= 0:
+                hz_value = 1.0
+            self.hz = hz_value
+        except Exception:
+            # Keep previous Hz if conversion fails
+            pass
