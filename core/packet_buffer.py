@@ -44,9 +44,10 @@ class PacketBuffer:
 
     def set_record_time(self, record_time):
         b = struct.pack('<f', float(record_time))
-        for buf in self.buffers:
-            if self.time_field_offset + 4 <= self.packet_length:
-                buf[self.time_field_offset:self.time_field_offset+4] = b
+        # Store timestamp once per record at absolute offset 24,
+        # which corresponds to packet 0 at offset time_field_offset
+        if self.buffers and self.time_field_offset + 4 <= self.packet_length:
+            self.buffers[0][self.time_field_offset:self.time_field_offset+4] = b
 
     def get_packets(self):
         return [bytes(b) for b in self.buffers]

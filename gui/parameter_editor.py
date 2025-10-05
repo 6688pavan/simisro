@@ -166,11 +166,7 @@ class ParameterEditorDialog(QDialog):
         self.name_edit = QLineEdit(self.param.name if self.param else "")
         form.addRow("Name:", self.name_edit)
         
-        # Serial number
-        self.sl_no_spin = QSpinBox()
-        self.sl_no_spin.setRange(0, 9999)
-        self.sl_no_spin.setValue(self.param.sl_no if self.param else 0)
-        form.addRow("Serial No:", self.sl_no_spin)
+        # Serial number intentionally omitted from editor; it is displayed in the table only
         
         # Packet ID
         self.packet_id_spin = QSpinBox()
@@ -358,7 +354,6 @@ class ParameterEditorDialog(QDialog):
         dtype = "bit" if cycle_type == 0 else "float"  # Major = bit, Minor = float
         
         return Parameter(
-            sl_no=self.sl_no_spin.value(),
             name=self.name_edit.text(),
             packet_id=self.packet_id_spin.value(),
             offset=self.offset_spin.value(),

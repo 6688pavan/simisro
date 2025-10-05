@@ -13,6 +13,7 @@ class WaveformPlotWidget(pg.PlotWidget):
         self.setLabel('bottom', 'Time (s)')
         self.curves = {}  # name -> (plotItem, data_deque)
         self.marker = None
+        self.window_seconds = 10.0  # Rolling time window for display
 
     def update_waveform(self, params, current_time, time_increment=1.0):
         for p in params:
@@ -55,6 +56,10 @@ class WaveformPlotWidget(pg.PlotWidget):
                         threshold = (p.min_v + p.max_v) / 2.0
                         first_y = p.min_v if analog < threshold else p.max_v
                     self.set_marker(current_time, first_y)
+        # Keep only the last window worth of data and pan the view
+        self._prune_window(current_time)
+        start_x = current_time - self.window_seconds
+        self.setXRange(start_x, current_time, padding=0)
 
     def update_sample(self, name, t, y):
         if name not in self.curves:
@@ -63,6 +68,17 @@ class WaveformPlotWidget(pg.PlotWidget):
         data["t"].append(t)
         data["y"].append(y)
         plot.setData(list(data["t"]), list(data["y"]))
+
+    def _prune_window(self, current_time):
+        """Remove points older than the rolling window for all curves."""
+        cutoff = current_time - self.window_seconds
+        for name, (plot, data) in self.curves.items():
+            # Pop from left while outside window
+            while data["t"] and data["t"][0] < cutoff:
+                data["t"].popleft()
+                data["y"].popleft()
+            # Update plot after pruning
+            plot.setData(list(data["t"]), list(data["y"]))
 
     def add_param(self, name):
         """Add a new parameter curve to the plot"""
