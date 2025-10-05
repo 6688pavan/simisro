@@ -387,10 +387,40 @@ class MainWindow(QMainWindow):
     def on_load_config(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load Config", "", "JSON Files (*.json)")
         if filename:
-            settings, params = self.config_manager.load_config(filename)
-            self.parameters = params
-            self.param_table.load_parameters(params)
-            self.log.append(f"Config loaded from {filename}")
+            try:
+                settings, params = self.config_manager.load_config(filename)
+                
+                # Load parameters like DAT file loading
+                if params:
+                    self.parameters = params
+                    self.param_table.load_parameters(params)
+                    self.log.append(f"Loaded {filename} with {len(params)} parameters")
+                    for param in params:
+                        self.log.append(f"  - {param.name} (Packet {param.packet_id}, Offset {param.offset})")
+                
+                # Apply simulation settings to UI
+                if settings:
+                    if 'start_time' in settings:
+                        self.start_time_edit.setText(str(settings['start_time']))
+                    if 'end_time' in settings:
+                        self.end_time_edit.setText(str(settings['end_time']))
+                    if 'hz' in settings:
+                        hz_text = str(settings['hz'])
+                        # Find and set the hz combo box
+                        index = self.hz_combo.findText(hz_text)
+                        if index >= 0:
+                            self.hz_combo.setCurrentIndex(index)
+                        else:
+                            # Add custom hz value if not in list
+                            self.hz_combo.addItem(hz_text)
+                            self.hz_combo.setCurrentText(hz_text)
+                    
+                    self.log.append(f"Applied simulation settings: start_time={settings.get('start_time')}, end_time={settings.get('end_time')}, hz={settings.get('hz')}")
+                
+                self.log.append(f"Config loaded successfully from {filename}")
+                
+            except Exception as e:
+                self.log.append(f"Error loading config: {str(e)}")
 
     def on_browse_file(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load .dat File", "", "DAT Files (*.dat)")

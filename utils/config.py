@@ -1,4 +1,5 @@
 import json
+from core.models import Parameter
 
 class ConfigManager:
     def save_config(self, filepath, parameters, simulation_settings):

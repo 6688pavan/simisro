@@ -107,6 +107,103 @@ The Telemetry Simulator is a PyQt5-based desktop application that generates synt
    - Log events and handle errors
    - Stop when timer reaches end time
 
+## Seeding Mechanism Deep Dive
+
+### What we seed
+
+- **Analog parameters (dtype = "float")**:
+  - Major cycle: 1 float sample per record (4 bytes) at `record_time`.
+  - Minor cycle: 5 float samples per record (5 × 4 bytes), at times `record_time + i * Δt`.
+- **Digital parameters (dtype = "bit")**:
+  - Major cycle: Single unsigned value at `record_time` with bit-width 8/16/32 bits.
+  - Minor cycle: 5 discrete samples per record, each stored as an 8‑byte slot (uint64) to align with existing packet layout while only the low 8 bits carry data.
+
+Each parameter specifies: `packet_id` (which packet within the record), `offset` (byte offset inside the packet), `samples_per_500ms` (1 for major, 5 for minor), waveform and limits, and an optional fixed value (for major analog).
+
+### When we seed
+
+- The simulation runs at `Hz` records per second; the time increment per record is `ΔT = 1 / Hz`.
+- For minor‑cycle parameters, the 5 intra‑record samples are spread uniformly across the record time window:
+  - `sample_time_i = record_time + i * (ΔT / 5)` for `i in [0..4]`.
+- For legacy logic described earlier, some views reference 100ms spacing; the actual implementation adapts spacing based on `Hz` via `ΔT / 5` so timing stays consistent across rates.
+
+### How we seed (end‑to‑end)
+
+1. `SeederThread.run()` advances `current_time` by `ΔT` and calls:
+   - `SeedingEngine.seed_record(params, record_time, dat_buffer, ΔT)`
+2. `SeedingEngine.seed_record` creates a `PacketBuffer` holding 10 packets × 1400 bytes (default) for the record.
+   - If a `.dat` snapshot is present, it is split into 10 × 1400‑byte packet images and used as the starting memory for the record; otherwise, a zero‑initialized record is used.
+   - The record time (float, little‑endian `<f`) is written at `time_field_offset` (default 24) into every packet.
+3. For each enabled parameter active at `record_time`:
+   - Major analog: compute `value = fixed_value` (or 0.0) and `insert_float(packet_id, offset, value)`.
+   - Major digital: threshold a waveform at `record_time` to choose min/max; insert as uint8/uint16/uint32 at `offset`.
+   - Minor analog: for `i=0..4`, compute `t_i = record_time + i * (ΔT / 5)`, evaluate waveform in `[min_v, max_v]`, and `insert_float(packet_id, offset + i*4, value_i)`.
+   - Minor digital: for `i=0..4`, compute a min/max toggle at `t_i`, and `insert_uint64(packet_id, offset + i*8, value_i & 0xFF)`.
+4. The `PacketBuffer` returns immutable `bytes` for each packet; `SeederThread` emits `record_ready(record_idx, record_time, packets)` containing exactly 10 packet blobs.
+5. `SenderThread.enqueue(...)` receives that record and queues it for transmission.
+
+### Memory layout of a record
+
+- A record is an array of `packets_per_record` packet bytearrays (default 10).
+- Each packet has `packet_length` bytes (default 1400), 4‑byte aligned.
+- The record time is written at `[time_field_offset : time_field_offset+4]` in every packet.
+- Parameter data occupies its configured `offset` in the target `packet_id`:
+  - Float sample: 4 bytes little‑endian `<f`.
+  - Digital major: `<B`, `<H`, or `<I` depending on bit‑width.
+  - Digital minor: 5 slots of 8 bytes each `<Q` at `offset + i*8` with only the low byte used.
+
+### Packetization and UDP transmission
+
+- `SenderThread` maintains a queue of records. In its loop it pops a record, then iterates over the 10 packet blobs and calls `socket.sendto(packet, (group, port))` for each.
+- It updates counters: `packet_sent`, `record_sent`, and cumulative `bytes_sent_signal`.
+- Pausing/resuming only affects processing of the queue; the buffered records remain intact.
+
+### Why 10 packets per record?
+
+- The simulator models a fixed‑width record composed of 10 equal‑sized packets for predictable layout and transport pacing. This also allows GUI stats like "Packets/Record" to remain constant and simplifies buffer math (packet_id × length + offset).
+
+## Directory Map and Roles
+
+- `main.py`: Application entry point; creates `QApplication`, instantiates and shows `MainWindow`.
+- `gui/main_window.py`: Orchestrates UI, starts/stops threads, connects signals, updates statistics and plot.
+- `gui/widgets/param_table.py`: Displays parameters, lengths derived from dtype and cycle, shows instantaneous values/timestamps.
+- `gui/widgets/waveform_plot.py`: Real‑time plotting of enabled parameters; manages curves and marker.
+- `gui/parameter_editor.py`: Dialog for creating/editing parameters (basic, waveform, timing tabs).
+- `core/seeder.py`: `SeedingEngine` implementation that seeds parameters into a `PacketBuffer` and emits per‑parameter samples for the UI.
+- `core/packet_buffer.py`: Low‑level byte insertions, record time writing, and conversion to immutable packet bytes.
+- `core/loader.py`: Loads `.dat` snapshots with embedded parameters (or legacy binary), and CSV parameter definitions.
+- `core/models.py`: Data classes for `Parameter` definitions and related structures.
+- `core/waveform.py`: Waveform factory and evaluators (Sine, Triangle, Square, Step, Noise).
+- `threads/seeder_thread.py`: QThread that advances time and calls `SeedingEngine.seed_record` at the configured Hz.
+- `threads/sender_thread.py`: QThread that dequeues records and multicasts each packet; reports stats.
+- `threads/worker_signals.py`: Shared Qt signals container (used in some tests/docs).
+- `utils/config.py`: Save/load JSON configs (simulation settings + parameters).
+- `utils/json_helpers.py`, `utils/io_helpers.py`, `utils/validators.py`, `utils/file_handler.py`, `utils/time_utils.py`: Misc utilities used across the app.
+- `scripts/*.py`: Test and demonstration scripts for timing, plotting, restart behavior, and parameter seeding.
+
+## Runtime Sequence (when running main.py)
+
+1. `python main.py` → `main()` creates a `QApplication`, applies Fusion style, creates `MainWindow`, shows it, and enters the Qt event loop.
+2. In `MainWindow`, you load parameters and (optionally) a `.dat` file snapshot.
+3. On Start:
+   - Reads UI inputs: multicast group/port, start/end time, Hz.
+   - Creates and starts `SenderThread` (configures UDP socket).
+   - Creates `SeederThread` with `params_getter`, `seeding_engine`, `dat_buffer`, and timing.
+   - Connects signals:
+     - `seeder.record_ready` → `sender.enqueue`, `on_record_ready`, `update_current_time`.
+     - `sender.record_sent` → `update_records_sent`.
+     - `sender.bytes_sent_signal` → `_update_bytes_sent`.
+   - Starts `SeederThread`.
+4. Looping runtime:
+   - `SeederThread` produces one record every `ΔT = 1/Hz` seconds.
+   - `SenderThread` consumes queued records and multicasts each of the 10 packets.
+   - GUI updates stats/plot via Qt signals.
+5. Pause/Resume/Reset:
+   - Pause toggles both threads to stop advancing time or consuming the queue.
+   - Resume continues from current time with the same Hz (or updated via UI).
+   - Reset stops both threads, clears GUI state, and returns to the initial screen.
+
+
 ### Threading Architecture
 
 #### SeederThread (Data Generation)

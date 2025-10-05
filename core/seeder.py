@@ -14,7 +14,21 @@ class SeedingEngine(QObject):
     def seed_record(self, params, record_time, dat_buffer=None, time_increment=1.0):
         buffer = PacketBuffer(self.packet_length, self.packets_per_record, self.time_field_offset)
         if dat_buffer is not None:
-            buffer.buffers = [bytearray(b) for b in dat_buffer]  # Copy .dat record
+            # Split dat_buffer into packets (1400 bytes each)
+            packets = []
+            for i in range(self.packets_per_record):
+                start_idx = i * self.packet_length
+                end_idx = start_idx + self.packet_length
+                if start_idx < len(dat_buffer):
+                    packet_data = dat_buffer[start_idx:end_idx]
+                    # Pad with zeros if packet is shorter than expected
+                    if len(packet_data) < self.packet_length:
+                        packet_data += b'\x00' * (self.packet_length - len(packet_data))
+                    packets.append(bytearray(packet_data))
+                else:
+                    # Create empty packet if dat_buffer is too short
+                    packets.append(bytearray(self.packet_length))
+            buffer.buffers = packets
         else:
             buffer.reset()  # Use empty buffers when no .dat file is loaded
         buffer.set_record_time(record_time)  # Write timer to all packets
