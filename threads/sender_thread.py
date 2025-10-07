@@ -1,6 +1,8 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 import socket
 import time
+import threading
+from queue import Queue
 
 class SenderThread(QThread):
     packet_sent = pyqtSignal(int, float)
@@ -15,49 +17,60 @@ class SenderThread(QThread):
         self.ttl = ttl
         self.sock = None
         self.total_bytes = 0
-        self._queue = []
-        self.paused = False
+        self.queue = Queue(maxsize=100)
+        # Use Event for pause/resume semantics (set = running, clear = paused)
+        self.pause_event = threading.Event()
+        self.pause_event.set()
 
     def configure_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.ttl)
 
     def enqueue(self, record_idx, record_time, packets):
-        self._queue.append((record_idx, packets))
+        try:
+            self.queue.put((record_idx, packets), block=True)
+        except Exception as e:
+            self.error.emit(str(e))
 
     def run(self):
         self.running = True
         self.configure_socket()
         while self.running:
-            if self.paused:
-                self.msleep(50)
+            try:
+                item = self.queue.get(timeout=0.1)
+            except Exception:
                 continue
-            if not self._queue:
-                self.msleep(1)  # Minimal sleep time
-                continue
-            
-            # Process all available records in the queue
-            while self._queue and self.running and not self.paused:
-                record_idx, packets = self._queue.pop(0)
-                bytes_sent = 0
-                for i, pkt in enumerate(packets):
-                    try:
-                        self.sock.sendto(pkt, (self.group, int(self.port)))
-                        bytes_sent += len(pkt)
-                        self.packet_sent.emit(i, time.time())
-                    except Exception as e:
-                        self.error.emit(str(e))
-                self.total_bytes += bytes_sent
-                self.bytes_sent_signal.emit(self.total_bytes)
-                self.record_sent.emit(record_idx, time.time())
+            if item is None:
+                break
+            # Ensure we respect pause
+            self.pause_event.wait()
+            record_idx, packets = item
+            bytes_sent = 0
+            for i, pkt in enumerate(packets):
+                try:
+                    self.sock.sendto(pkt, (self.group, int(self.port)))
+                    bytes_sent += len(pkt)
+                    self.packet_sent.emit(i, time.time())
+                except Exception as e:
+                    self.error.emit(str(e))
+            self.total_bytes += bytes_sent
+            self.bytes_sent_signal.emit(self.total_bytes)
+            self.record_sent.emit(record_idx, time.time())
+            self.queue.task_done()
 
     def pause(self):
-        self.paused = True
+        self.pause_event.clear()
 
     def resume(self):
-        self.paused = False
+        self.pause_event.set()
 
     def stop(self):
         self.running = False
+        # Ensure we can exit even if paused
+        self.pause_event.set()
+        try:
+            self.queue.put(None, block=False)
+        except Exception:
+            pass
         self.quit()
         self.wait()

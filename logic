@@ -212,9 +212,8 @@ def run(self):
     current_time = self.start_time
     record_idx = 0
     while self.running and current_time <= self.end_time:
-        if self.paused:
-            time.sleep(0.05)
-            continue
+        # Block here while paused; returns immediately when resumed
+        self.pause_event.wait()
         try:
             buffer = self.seeding_engine.seed_record(
                 self.params_getter(), current_time, self.dat_buffer)
@@ -234,15 +233,14 @@ def run(self):
     self.running = True
     self.configure_socket()
     while self.running:
-        if self.paused:
-            self.msleep(50)
-            continue
+        # Block here while paused; returns immediately when resumed
+        self.pause_event.wait()
         if not self._queue:
             self.msleep(1)
             continue
         
         # Process all available records
-        while self._queue and self.running and not self.paused:
+        while self._queue and self.running and self.pause_event.is_set():
             record_idx, packets = self._queue.pop(0)
             bytes_sent = 0
             for i, pkt in enumerate(packets):
@@ -922,10 +920,10 @@ The simulation rate is controlled by the Hz setting in the GUI:
 
 ### Pause/Resume Logic
 
-Both SeederThread and SenderThread have synchronized pause/resume:
-- **Pause**: Stops record generation AND transmission processing
-- **Resume**: Continues from current simulation time
-- **Reset**: Stops all threads, clears displays, resets to initial state
+Both SeederThread and SenderThread use `threading.Event` for synchronized pause/resume:
+- **Pause**: Calls `pause_event.clear()` to block threads at `pause_event.wait()` with near‑zero CPU
+- **Resume**: Calls `pause_event.set()` to immediately unblock threads
+- **Reset/Stop**: Sets `pause_event` to allow clean exit if paused, then stops threads and resets UI state
 
 ### Parameter Seeding Logic
 

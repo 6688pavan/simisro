@@ -517,24 +517,25 @@ class MainWindow(QMainWindow):
 
                 if param.samples_per_500ms == 1:  # Major cycle - single value
                     if param.dtype == "float":
-                        value = 0.0  # No fixed value UI anymore; keep 0.0 default for float major
+                        # Use the actual waveform value at the instantaneous time
+                        value = wf.value(record_time, param.min_v, param.max_v)
                     else:
-                        # Bit-major toggles strictly between min and max
+                        # Bit-major toggles strictly between min and max at instantaneous time
                         analog = wf.value(record_time, param.min_v, param.max_v)
                         threshold = (param.min_v + param.max_v) / 2.0
                         value = param.min_v if analog < threshold else param.max_v
                     self.param_table.update_instantaneous(param.name, value, record_time, time_increment)
-                else:  # Minor cycle - 5 samples
-                    # Calculate all 5 sample values with correct spacing
+                else:  # Minor cycle - 5 samples without any phase-offset (display-only)
                     sample_values = []
+                    sample_times = []
                     sample_spacing = time_increment / 5.0
                     for i in range(5):
                         sample_time = record_time + i * sample_spacing
+                        sample_times.append(sample_time)
                         value = wf.value(sample_time, param.min_v, param.max_v)
                         sample_values.append(value)
-                    
-                    # Update table with all 5 values
-                    self.param_table.update_instantaneous(param.name, sample_values, record_time, time_increment)
+                    # Update table with all 5 values and explicit times
+                    self.param_table.update_instantaneous(param.name, sample_values, sample_times, time_increment)
 
     def update_current_time(self, record_idx, record_time, packets):
         """Update current time from seeder thread"""

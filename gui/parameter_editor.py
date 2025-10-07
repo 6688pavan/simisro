@@ -246,10 +246,7 @@ class ParameterEditorDialog(QDialog):
         self.max_spin.setValue(self.param.max_v if self.param else 1.0)
         form.addRow("Max Value:", self.max_spin)
         
-        # Full sweep
-        self.full_sweep_check = QCheckBox()
-        self.full_sweep_check.setChecked(self.param.full_sweep if self.param else True)
-        form.addRow("Full Sweep:", self.full_sweep_check)
+        # Full sweep control removed (always full sweep behavior)
         
         # For bit-major, value toggles strictly between Min and Max; no fixed value control
         
@@ -321,9 +318,9 @@ class ParameterEditorDialog(QDialog):
         waveform_type = self.waveform_combo.currentText()
         freq = self.freq_spin.value()
         phase = self.phase_spin.value() * math.pi / 180.0
-        full_sweep = self.full_sweep_check.isChecked()
         
-        wf = make_waveform(waveform_type, freq, phase, full_sweep)
+        # Always use full sweep behavior
+        wf = make_waveform(waveform_type, freq, phase, True)
         min_v = self.min_spin.value()
         max_v = self.max_spin.value()
         
@@ -363,7 +360,7 @@ class ParameterEditorDialog(QDialog):
             waveform=self.waveform_combo.currentText(),
             freq=self.freq_spin.value(),
             phase=self.phase_spin.value() * math.pi / 180.0,  # Convert degrees to radians
-            full_sweep=self.full_sweep_check.isChecked(),
+            full_sweep=True,
             samples_per_500ms=samples_per_500ms,
             enabled_in_graph=self.graph_check.isChecked(),
             enabled=True,  # All parameters are enabled by default

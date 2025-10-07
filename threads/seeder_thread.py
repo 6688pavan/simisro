@@ -1,5 +1,6 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 import time
+import threading
 
 class SeederThread(QThread):
     record_ready = pyqtSignal(int, float, list)  # record_idx, record_time, packets
@@ -14,7 +15,9 @@ class SeederThread(QThread):
         self.end_time = end_time
         self.hz = hz
         self.running = False
-        self.paused = False
+        # Use Event for pause/resume semantics (set = running, clear = paused)
+        self.pause_event = threading.Event()
+        self.pause_event.set()
 
     def run(self):
         self.running = True
@@ -22,9 +25,8 @@ class SeederThread(QThread):
         record_idx = 0
         
         while self.running and current_time <= self.end_time:
-            if self.paused:
-                time.sleep(0.05)
-                continue
+            # Block here when paused; returns immediately when event is set
+            self.pause_event.wait()
             try:
                 # Compute time increment dynamically so runtime Hz changes take effect
                 time_increment = 1.0 / self.hz if self.hz != 0 else 0.0
@@ -44,13 +46,15 @@ class SeederThread(QThread):
                 self.error.emit(str(e))
 
     def pause(self):
-        self.paused = True
+        self.pause_event.clear()
 
     def resume(self):
-        self.paused = False
+        self.pause_event.set()
 
     def stop(self):
         self.running = False
+        # Ensure we can exit even if paused
+        self.pause_event.set()
         self.quit()
         self.wait()
 

@@ -33,9 +33,8 @@ class WaveformPlotWidget(pg.PlotWidget):
                         y = p.min_v if analog < threshold else p.max_v
                         self.update_sample(p.name, current_time, y)
                         self.set_marker(current_time, y)
-                else:  # Minor cycle - 5 samples
+                else:  # Minor cycle - 5 samples without any phase-offset (display-only)
                     wf = make_waveform(p.waveform, p.freq, p.phase, p.full_sweep)
-                    # Update with all 5 sample values with correct spacing
                     sample_spacing = time_increment / 5.0
                     for i in range(5):
                         sample_time = current_time + i * sample_spacing
@@ -48,7 +47,7 @@ class WaveformPlotWidget(pg.PlotWidget):
                             y = p.min_v if analog < threshold else p.max_v
                         self.update_sample(p.name, sample_time, y)
                     
-                    # Set marker at the first sample
+                    # Set marker at the first sample time
                     if p.dtype == "float":
                         first_y = wf.value(current_time, p.min_v, p.max_v)
                     else:

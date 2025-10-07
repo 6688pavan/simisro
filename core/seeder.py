@@ -1,5 +1,6 @@
 from .packet_buffer import PacketBuffer
 from .waveform import make_waveform
+import math
 from PyQt5.QtCore import QObject, pyqtSignal
 
 class SeedingEngine(QObject):
@@ -37,15 +38,18 @@ class SeedingEngine(QObject):
             if not param.enabled or record_time < param.start_time or record_time > param.end_time:
                 continue
             if param.samples_per_500ms == 1:  # Major cycle
+                # Sample strictly at record_time (no phase offset)
+                sample_time = record_time
                 if param.dtype == "float":
-                    # For float major, keep fixed value behavior if provided, else 0.0
-                    value = param.fixed_value if param.fixed_value is not None else 0.0
+                    wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
+                    # Use waveform value at sample_time; fall back to fixed_value if explicitly set
+                    value = param.fixed_value if param.fixed_value is not None else wf.value(sample_time, param.min_v, param.max_v)
                     buffer.insert_float(param.packet_id, param.offset, value)
                     if param.enabled_in_graph:
                         self.sample_generated.emit(param.name, value, record_time)
                 else:  # Digital (bit) -> toggle strictly between min_v and max_v using waveform threshold
                     wf = make_waveform(param.waveform, param.freq, param.phase, param.full_sweep)
-                    analog = wf.value(record_time, param.min_v, param.max_v)
+                    analog = wf.value(sample_time, param.min_v, param.max_v)
                     threshold = (param.min_v + param.max_v) / 2.0
                     value = param.min_v if analog < threshold else param.max_v
                     if param.bit_width == 8:
@@ -61,7 +65,13 @@ class SeedingEngine(QObject):
                 sample_values = []
                 sample_spacing = time_increment / 5.0  # Spread 5 samples across the time increment
                 for i in range(5):
-                    sample_time = record_time + i * sample_spacing
+                    # Deterministic non-repeating time adjustment independent of ΔT (tied to waveform period):
+                    # add a small phase-based time offset (~1% of the waveform period) using golden-ratio progression
+                    k = int(round(record_time / time_increment)) if time_increment > 0 else 0
+                    golden_frac = (k * 0.61803398875) % 1.0
+                    period = 1.0 / param.freq if getattr(param, 'freq', 0.0) not in (0.0, None) else 0.0
+                    phase_time_offset = (period * 0.01) * (golden_frac - 0.5) if period > 0.0 else 0.0
+                    sample_time = record_time + i * sample_spacing + phase_time_offset
                     if param.dtype == "float":
                         value = wf.value(sample_time, param.min_v, param.max_v)
                         sample_values.append(value)
