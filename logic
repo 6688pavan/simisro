@@ -38,7 +38,7 @@ The Telemetry Simulator is a PyQt5-based desktop application that generates synt
 ┌─────────────────────────────────────────────────────────────┐
 │                    GUI Layer (PyQt5)                        │
 ├─────────────────────────────────────────────────────────────┤
-│  MainWindow │ ParameterTable │ WaveformPlot │ ParameterEditor │
+│ MainWindow │ ParameterTable │ WaveformPlot │ ParameterEditor│
 ├─────────────────────────────────────────────────────────────┤
 │                    Threading Layer                          │
 ├─────────────────────────────────────────────────────────────┤
@@ -50,7 +50,7 @@ The Telemetry Simulator is a PyQt5-based desktop application that generates synt
 ├─────────────────────────────────────────────────────────────┤
 │                    Data Models                              │
 ├─────────────────────────────────────────────────────────────┤
-│  Parameter │ ParameterList │ RecordSpec │ WaveformGenerators │
+│  Parameter │ ParameterList │ RecordSpec │ WaveformGenerators│
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -975,3 +975,84 @@ The updated Telemetry Simulator provides:
 - **Robust Error Handling**: Comprehensive error handling and logging throughout
 
 This implementation ensures proper timing, synchronized control, real-time feedback, and flexible parameter management as specified in the requirements.
+
+
+## Updated Directory Structure (Simulator-Relevant)
+
+```
+ddr4s/
+├── main.py
+├── requirements.txt
+├── core/
+│   ├── __init__.py
+│   ├── models.py
+│   ├── seeder.py
+│   ├── packet_buffer.py
+│   ├── waveform.py
+│   ├── loader.py
+│   ├── multicast_sender.py
+│   └── parameter.py
+├── gui/
+│   ├── __init__.py
+│   ├── main_window.py
+│   ├── parameter_editor.py
+│   ├── dialogs.py
+│   └── widgets/
+│       ├── __init__.py
+│       ├── param_table.py
+│       ├── waveform_plot.py
+│       └── log_view.py
+├── threads/
+│   ├── __init__.py
+│   ├── seeder_thread.py
+│   ├── sender_thread.py
+│   └── worker_signals.py
+├── utils/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── file_handler.py
+│   ├── io_helpers.py
+│   ├── json_helpers.py
+│   ├── time_utils.py
+│   └── validators.py
+├── resources/
+│   └── style.qss
+└── mermaid_flow.md
+```
+
+
+## Presentation Script (Step-by-Step Using Mermaid Sequence)
+
+Use `mermaid_flow.md` as the visual. Walk through these talking points in order:
+
+1) Startup and UI init
+- main.py creates QApplication, instantiates `gui/main_window.py` MainWindow, shows the window, applies `resources/style.qss` theme.
+- MainWindow builds the layout: parameter table, waveform plot, log view, and top controls.
+
+2) Loading config and data
+- From the UI, load JSON via `utils/config.py:ConfigManager.load_config`; apply start/end time and Hz; populate parameters into `gui/widgets/param_table.py`.
+- Optionally browse a .dat file via `core/loader.py:Loader.load_dat`; receive `(dat_buffer, parameters)` (or just data) and update the table.
+
+3) Editing parameters
+- Open `gui/parameter_editor.py` to add/edit a parameter (packet id, offset, dtype, cycle, waveform, timing, enable flags).
+- On accept, update the table; optionally export the current state via `ConfigManager.save_config` (JSON).
+
+4) Start simulation (threads)
+- Start `threads/sender_thread.py` (UDP socket prepared) and `threads/seeder_thread.py` (with start/end time and Hz).
+- Signal wiring: `seeder.record_ready → sender.enqueue`, plus GUI slots for time and stats.
+
+5) Per-record loop (core seeding)
+- `SeederThread` computes Δt = 1/Hz and calls `core/seeder.py:SeedingEngine.seed_record(params, t, dat_buffer, Δt)`.
+- `SeedingEngine` creates a `core/packet_buffer.py:PacketBuffer`, writes the record timestamp, and for each enabled parameter:
+  - Major analog/digital: 1 sample at `t` into the configured packet/offset.
+  - Minor analog/digital: 5 samples at `t + i*(Δt/5)` into strided offsets (float: +4, digital: +8 as uint64 slots).
+- Emits UI instantaneous updates; returns packets to `SeederThread`.
+
+6) Send and update UI
+- `SenderThread.enqueue` queues the record; the sender waits on its pause gate, then iterates the 10 packets and `sendto` via `core/multicast_sender.py`.
+- GUI updates: records sent, current time, instantaneous values in table, waveforms in plot, and logs.
+
+7) Controls and shutdown
+- Pause/Resume toggles both threads’ Events; Reset/Stop stops threads, clears UI, and returns to idle.
+
+Tip for demo: keep Mermaid visible and point at each participant as you narrate these steps so the flow is obvious (Startup → Config/Data → Edit → Start → Loop → Send → UI → Controls).
