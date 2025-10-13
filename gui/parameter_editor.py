@@ -200,7 +200,7 @@ class ParameterEditorDialog(QDialog):
         
         # Show in Graph checkbox
         self.graph_check = QCheckBox()
-        self.graph_check.setChecked(self.param.enabled_in_graph if self.param else False)
+        self.graph_check.setChecked(self.param.enabled_in_graph if self.param else True)  # Default to True for new parameters
         form.addRow("Show in Graph:", self.graph_check)
         
         tab.setLayout(form)

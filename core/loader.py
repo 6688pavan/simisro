@@ -51,6 +51,7 @@ class Loader:
                     phase=phase,
                     samples_per_500ms=samples_per_500ms,
                     enabled=enabled,
+                    enabled_in_graph=True,  # Enable graph display by default for DAT-loaded parameters
                     start_time=-900.0,
                     end_time=1200.0,
                     bit_width=bit_width
@@ -93,5 +94,6 @@ class Loader:
                     bit_width=int(row.get("bit_width", 8))
                 )
                 param.enabled = True
+                param.enabled_in_graph = True  # Enable graph display by default for CSV-loaded parameters
                 params.append(param)
         return params

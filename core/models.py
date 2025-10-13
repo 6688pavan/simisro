@@ -14,7 +14,7 @@ class Parameter:
     phase: float = 0.0
     full_sweep: bool = True
     samples_per_500ms: int = 1  # 5 for minor cycle, 1 for major
-    enabled_in_graph: bool = False
+    enabled_in_graph: bool = True  # Default to showing in graph
     enabled: bool = True  # For seeding
     start_time: float = None  # Custom seeding window
     end_time: float = None

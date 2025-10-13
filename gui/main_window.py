@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
         # Left: Parameter table with controls
         left_widget = QWidget()
         left_lay = QVBoxLayout()
-        self.param_table = ParameterTableWidget(self.parameters)
+        self.param_table = ParameterTableWidget()
         left_lay.addWidget(self.param_table)
         
         # Parameter controls
@@ -356,21 +356,27 @@ class MainWindow(QMainWindow):
 
     def on_reset(self):
         """Reset the simulation to initial state"""
+        # Stop threads first
         if self.seeder_thread:
             self.seeder_thread.stop()
+            self.seeder_thread = None
         if self.sender_thread:
             self.sender_thread.stop()
+            self.sender_thread = None
         
         # Reset all counters and displays
         self.current_time_label.setText("Current Time: 0 sec")
         self.records_sent_label.setText("Records Sent: 0")
         
-        # Clear the waveform plot
+        # Clear the waveform plot completely
         self.waveform_plot.clear_plot()
         
         # Reset parameter table instantaneous values
         for param in self.parameters:
             self.param_table.update_instantaneous(param.name, 0.0, 0.0)
+        
+        # Clear any pending events
+        self.waveform_plot.processEvents()
         
         self.log.append("Simulation reset to initial state")
 
@@ -458,6 +464,7 @@ class MainWindow(QMainWindow):
             self.parameters.append(new_param)
             self.param_table.parameters_list = self.parameters  # Update reference
             self.param_table.load_parameters(self.parameters)
+            print(f"DEBUG: Added parameter {new_param.name}, enabled_in_graph={new_param.enabled_in_graph}")
             self.log.append(f"Added parameter: {new_param.name}")
 
     def on_edit_param(self):
@@ -472,6 +479,7 @@ class MainWindow(QMainWindow):
                 edited_param = dialog.get_parameter()
                 self.parameters[current_row] = edited_param
                 self.param_table.load_parameters(self.parameters)
+                print(f"DEBUG: Updated parameter {edited_param.name}, enabled_in_graph={edited_param.enabled_in_graph}")
                 self.log.append(f"Updated parameter: {edited_param.name}")
         else:
             self.log.append("Please select a parameter to edit")
@@ -492,14 +500,22 @@ class MainWindow(QMainWindow):
         hz = float(self.hz_combo.currentText())
         time_increment = 1.0 / hz
         
-        # Update GUI with new record data (only plot params within their timing window)
-        filtered_params = []
-        for p in self.parameters:
-            within_start = True if (p.start_time is None) else (record_time >= p.start_time)
-            within_end = True if (p.end_time is None) else (record_time <= p.end_time)
-            if within_start and within_end:
-                filtered_params.append(p)
-        self.waveform_plot.update_waveform(filtered_params, record_time, time_increment)
+        # Update GUI with new record data - show ALL enabled parameters in graph
+        # (Don't filter by timing windows for graph display)
+        graph_params = [p for p in self.parameters if p.enabled_in_graph]
+        
+        # Debug output
+        if record_idx < 3:  # Only show first few records to avoid spam
+            print(f"DEBUG: Total parameters: {len(self.parameters)}")
+            for i, p in enumerate(self.parameters):
+                print(f"  Param {i}: {p.name}, enabled_in_graph={p.enabled_in_graph}, enabled={p.enabled}")
+            print(f"DEBUG: Graph params: {len(graph_params)}")
+            for p in graph_params:
+                print(f"  Graph param: {p.name}")
+            print(f"DEBUG: Graph param names: {[p.name for p in graph_params]}")
+            print(f"DEBUG: Graph param enabled_in_graph: {[p.enabled_in_graph for p in graph_params]}")
+        
+        self.waveform_plot.update_waveform(graph_params, record_time, time_increment)
         # Reflect generated record count immediately for responsiveness
         self.records_sent_label.setText(f"Records Sent: {record_idx + 1}")
         

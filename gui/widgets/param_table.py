@@ -8,9 +8,12 @@ class ParameterTableWidget(QTableWidget):
         super().__init__(0, len(self.HEADERS))
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.parameters_list = parameters_list
+        # Hash map for O(1) parameter name lookup: name -> row_index
+        self.name_to_row = {}
 
     def load_parameters(self, params):
         self.setRowCount(0)
+        self.name_to_row.clear()  # Clear the hash map
         for param in params:
             self.add_parameter(param)
 
@@ -50,13 +53,17 @@ class ParameterTableWidget(QTableWidget):
         enabled_checkbox.setChecked(param.enabled)
         enabled_checkbox.stateChanged.connect(lambda state, row=r: self._update_enabled(row, state))
         self.setCellWidget(r, 2, enabled_checkbox)
+        
+        # Add to hash map for O(1) lookup
+        self.name_to_row[param.name] = r
 
     def _update_graph_enable(self, row, state):
         # Update parameter enabled_in_graph state
         if self.parameters_list and row < len(self.parameters_list):
             self.parameters_list[row].enabled_in_graph = bool(state)
             param_name = self.item(row, 3).text() if self.item(row, 3) else "Unknown"
-            print(f"Parameter {param_name} graph enabled: {bool(state)}")
+            print(f"DEBUG: Parameter {param_name} graph enabled: {bool(state)} (row {row})")
+            print(f"DEBUG: Parameter object enabled_in_graph: {self.parameters_list[row].enabled_in_graph}")
 
     def _update_enabled(self, row, state):
         # Update parameter enabled state
@@ -79,19 +86,21 @@ class ParameterTableWidget(QTableWidget):
         the provided times will be displayed verbatim. Otherwise, times will be
         reconstructed using the given time_increment.
         """
-        for r in range(self.rowCount()):
-            if self.item(r, 3) and self.item(r, 3).text() == name:
-                if isinstance(value, list):  # Minor cycle
-                    values_text = " | ".join([f"{v:.4g}" for v in value])
-                    # If t is a list of times matching value count, use it directly
-                    if isinstance(t, list) and len(t) == len(value):
-                        times_text = " | ".join([f"{ti:.3f}" for ti in t])
-                    else:
-                        sample_spacing = time_increment / 5.0
-                        times_text = " | ".join([f"{t + i*sample_spacing:.3f}" for i in range(5)])
-                    self.setItem(r, 8, QTableWidgetItem(values_text))
-                    self.setItem(r, 9, QTableWidgetItem(times_text))
-                else:  # Major cycle
-                    self.setItem(r, 8, QTableWidgetItem(f"{value:.4g}"))
-                    self.setItem(r, 9, QTableWidgetItem(f"{t:.3f}"))
-                break
+        # O(1) hash lookup instead of O(n) linear search
+        if name not in self.name_to_row:
+            return  # Parameter not found
+        
+        r = self.name_to_row[name]
+        if isinstance(value, list):  # Minor cycle
+            values_text = " | ".join([f"{v:.4g}" for v in value])
+            # If t is a list of times matching value count, use it directly
+            if isinstance(t, list) and len(t) == len(value):
+                times_text = " | ".join([f"{ti:.3f}" for ti in t])
+            else:
+                sample_spacing = time_increment / 5.0
+                times_text = " | ".join([f"{t + i*sample_spacing:.3f}" for i in range(5)])
+            self.setItem(r, 8, QTableWidgetItem(values_text))
+            self.setItem(r, 9, QTableWidgetItem(times_text))
+        else:  # Major cycle
+            self.setItem(r, 8, QTableWidgetItem(f"{value:.4g}"))
+            self.setItem(r, 9, QTableWidgetItem(f"{t:.3f}"))
